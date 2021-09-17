@@ -21,10 +21,6 @@ def mask_image():
 	file = request.files['image'].read() ## byte file
 	npimg = np.fromstring(file, np.uint8)
 	img = cv2.imdecode(npimg,cv2.IMREAD_COLOR)
-	######### Do preprocessing here ################
-	# img[img > 150] = 0
-	## any random stuff do here
-	################################################
 
 	img = runModel(img)
 
@@ -47,6 +43,8 @@ def home():
 def gen():
     """Video streaming generator function."""
     cap = cv2.VideoCapture('pedestrians.mp4')
+	#cap = cv2.VideoCapture('pedestrians2.avi')
+	#cap = cv2.VideoCapture('pedestrians.mp4')
 
     # Read until video is completed
     while(cap.isOpened()):
@@ -89,8 +87,149 @@ def gen():
         #time.sleep(0.1)
         key = cv2.waitKey(20)
         if key == 27:
-           break
-   
+           break     
+
+def gen2():
+	# construct the argument parse and parse the arguments
+	'''ap = argparse.ArgumentParser()
+	ap.add_argument("-i", "--input", type=str, default="",
+		help="path to (optional) input video file")
+	ap.add_argument("-o", "--output", type=str, default="",
+		help="path to (optional) output video file")
+	ap.add_argument("-d", "--display", type=int, default=1,
+		help="whether or not output frame should be displayed")
+	args = vars(ap.parse_args(["--input","pedestrians.mp4","--output","my_output.avi","--display","1"]))'''
+
+	# load the COCO class labels our YOLO model was trained on
+	labelsPath = "coco.names"
+	LABELS = open(labelsPath).read().strip().split("\n")
+
+	# derive the paths to the YOLO weights and model configuration
+	weightsPath = "./yolov3.weights"
+	configPath = "./cfg/yolov3.cfg"
+
+	# load our YOLO object detector trained on COCO dataset (80 classes)
+	print("[INFO] cargando YOLO desde el disco...")
+	net = cv2.dnn.readNetFromDarknet(configPath, weightsPath)
+
+	# determine only the *output* layer names that we need from YOLO
+	ln = net.getLayerNames()
+	ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+
+	# initialize the video stream and pointer to output video file
+	print("[INFO] accediendo al input de video...")
+	vs = cv2.VideoCapture("pedestrians.mp4")
+	#vs = cv2.VideoCapture("pedestrians2.avi")
+	#
+	#vs = cv2.VideoCapture(0)
+
+	#writer = None
+
+	# loop over the frames from the video stream
+	while True:
+		# read the next frame from the file
+		(grabbed, frame) = vs.read()
+
+		# if the frame was not grabbed, then we have reached the end
+		# of the stream
+		if not grabbed:
+			break
+
+		# resize the frame and then detect people (and only people) in it
+		frame = imutils.resize(frame, width=700)
+		results = detect_people(frame, net, ln, personIdx=LABELS.index("person"))
+
+		# initialize the set of indexes that violate the minimum social
+		# distance
+		violate = set()
+
+		# ensure there are *at least* two people detections (required in
+		# order to compute our pairwise distance maps)
+		if len(results) >= 2:
+			# extract all centroids from the results and compute the
+			# Euclidean distances between all pairs of the centroids
+			centroids = np.array([r[2] for r in results])
+			D = dist.cdist(centroids, centroids, metric="euclidean")
+
+			# loop over the upper triangular of the distance matrix
+			for i in range(0, D.shape[0]):
+				for j in range(i + 1, D.shape[1]):
+					# check to see if the distance between any two
+					# centroid pairs is less than the configured number
+					# of pixels
+					if D[i, j] < MIN_DISTANCE:
+						# update our violation set with the indexes of
+						# the centroid pairs
+						violate.add(i)
+						violate.add(j)
+
+		# loop over the results
+		for (i, (prob, bbox, centroid)) in enumerate(results):
+			# extract the bounding box and centroid coordinates, then
+			# initialize the color of the annotation
+			(startX, startY, endX, endY) = bbox
+			(cX, cY) = centroid
+			color = (0, 255, 0)
+
+			# if the index pair exists within the violation set, then
+			# update the color
+			if i in violate:
+				color = (0, 0, 255)
+
+			# draw (1) a bounding box around the person and (2) the
+			# centroid coordinates of the person,
+			cv2.rectangle(frame, (startX, startY), (endX, endY), color, 2)
+			cv2.circle(frame, (cX, cY), 5, color, 1)
+
+		# draw the total number of social distancing violations on the
+		# output frame
+		text = "Violaciones en Distanciamiento Social: {}".format(len(violate))
+		cv2.putText(frame, text, (10, frame.shape[0] - 25),
+			cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 3)
+
+		# check to see if the output frame should be displayed to our
+		# screen
+		'''if args["display"] > 0:
+			# show the output frame
+			#cv2_imshow(frame)
+			key = cv2.waitKey(1) & 0xFF
+
+			# if the `q` key was pressed, break from the loop
+			if key == ord("q"):
+				break
+
+		# if an output video file path has been supplied and the video
+		# writer has not been initialized, do so now
+		if args["output"] != "" and writer is None:
+			# initialize our video writer
+			fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+			writer = cv2.VideoWriter(args["output"], fourcc, 25,
+				(frame.shape[1], frame.shape[0]), True)'''
+
+		# if the video writer is not None, write the frame to the output
+		# video file
+		'''if writer is not None:
+			writer.write(frame)	  '''
+		
+		frame = cv2.imencode('.jpg', frame).tobytes()
+		yield (b'--frame\r\n'b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+		#time.sleep(0.1)
+
+@app.route('/video_feed')
+def video_feed():
+    """Video streaming route. Put this in the src attribute of an img tag."""
+    return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+	#return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+	
+@app.after_request
+def after_request(response):
+    print("log: estableciendo cores" , file = sys.stderr)
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE')
+    return response
+
 def detect_people(frame, net, ln, personIdx=0):
 	# grab the dimensions of the frame and  initialize the list of
 	# results
@@ -163,143 +302,7 @@ def detect_people(frame, net, ln, personIdx=0):
 			results.append(r)
 
 	# return the list of results
-	return results     
-
-def gen2():
-	# construct the argument parse and parse the arguments
-	ap = argparse.ArgumentParser()
-	ap.add_argument("-i", "--input", type=str, default="",
-		help="path to (optional) input video file")
-	ap.add_argument("-o", "--output", type=str, default="",
-		help="path to (optional) output video file")
-	ap.add_argument("-d", "--display", type=int, default=1,
-		help="whether or not output frame should be displayed")
-	args = vars(ap.parse_args(["--input","pedestrians.mp4","--output","my_output.avi","--display","1"]))
-
-	# load the COCO class labels our YOLO model was trained on
-	labelsPath = os.path.sep.join(["coco.names"])
-	LABELS = open(labelsPath).read().strip().split("\n")
-
-	# derive the paths to the YOLO weights and model configuration
-	weightsPath = os.path.sep.join(["yolov3.weights"])
-	configPath = os.path.sep.join(["/cfg/yolov3.cfg"])
-
-	# load our YOLO object detector trained on COCO dataset (80 classes)
-	print("[INFO] cargando YOLO desde el disco...")
-	net = cv2.dnn.readNetFromDarknet(configPath, weightsPath)
-
-	# determine only the *output* layer names that we need from YOLO
-	ln = net.getLayerNames()
-	ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
-
-	# initialize the video stream and pointer to output video file
-	print("[INFO] accediendo al input de video...")
-	vs = cv2.VideoCapture(args["input"] if args["input"] else 0)
-	#
-	#vs = cv2.VideoCapture(0)
-
-	writer = None
-
-	# loop over the frames from the video stream
-	while True:
-		# read the next frame from the file
-		(grabbed, frame) = vs.read()
-
-		# if the frame was not grabbed, then we have reached the end
-		# of the stream
-		if not grabbed:
-			break
-
-		# resize the frame and then detect people (and only people) in it
-		frame = imutils.resize(frame, width=700)
-		results = detect_people(frame, net, ln, personIdx=LABELS.index("person"))
-
-		# initialize the set of indexes that violate the minimum social
-		# distance
-		violate = set()
-
-		# ensure there are *at least* two people detections (required in
-		# order to compute our pairwise distance maps)
-		if len(results) >= 2:
-			# extract all centroids from the results and compute the
-			# Euclidean distances between all pairs of the centroids
-			centroids = np.array([r[2] for r in results])
-			D = dist.cdist(centroids, centroids, metric="euclidean")
-
-			# loop over the upper triangular of the distance matrix
-			for i in range(0, D.shape[0]):
-				for j in range(i + 1, D.shape[1]):
-					# check to see if the distance between any two
-					# centroid pairs is less than the configured number
-					# of pixels
-					if D[i, j] < MIN_DISTANCE:
-						# update our violation set with the indexes of
-						# the centroid pairs
-						violate.add(i)
-						violate.add(j)
-
-		# loop over the results
-		for (i, (prob, bbox, centroid)) in enumerate(results):
-			# extract the bounding box and centroid coordinates, then
-			# initialize the color of the annotation
-			(startX, startY, endX, endY) = bbox
-			(cX, cY) = centroid
-			color = (0, 255, 0)
-
-			# if the index pair exists within the violation set, then
-			# update the color
-			if i in violate:
-				color = (0, 0, 255)
-
-			# draw (1) a bounding box around the person and (2) the
-			# centroid coordinates of the person,
-			cv2.rectangle(frame, (startX, startY), (endX, endY), color, 2)
-			cv2.circle(frame, (cX, cY), 5, color, 1)
-
-		# draw the total number of social distancing violations on the
-		# output frame
-		text = "Violaciones en Distanciamiento Social: {}".format(len(violate))
-		cv2.putText(frame, text, (10, frame.shape[0] - 25),
-			cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 3)
-
-		# check to see if the output frame should be displayed to our
-		# screen
-		if args["display"] > 0:
-			# show the output frame
-			#cv2_imshow(frame)
-			key = cv2.waitKey(1) & 0xFF
-
-			# if the `q` key was pressed, break from the loop
-			if key == ord("q"):
-				break
-
-		# if an output video file path has been supplied and the video
-		# writer has not been initialized, do so now
-		if args["output"] != "" and writer is None:
-			# initialize our video writer
-			fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-			writer = cv2.VideoWriter(args["output"], fourcc, 25,
-				(frame.shape[1], frame.shape[0]), True)
-
-		# if the video writer is not None, write the frame to the output
-		# video file
-		if writer is not None:
-			writer.write(frame)	   
-
-@app.route('/video_feed')
-def video_feed():
-    """Video streaming route. Put this in the src attribute of an img tag."""
-    return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-	
-@app.after_request
-def after_request(response):
-    print("log: setting cors" , file = sys.stderr)
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE')
-    return response
-
+	return results
 
 if __name__ == '__main__':
 	app.run(debug = True)

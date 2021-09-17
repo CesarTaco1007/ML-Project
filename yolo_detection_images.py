@@ -62,6 +62,7 @@ def get_predection(image,net,LABELS,COLORS):
     boxes = []
     confidences = []
     classIDs = []
+    personIdx = 0
 
     # loop over each of the layer outputs
     for output in layerOutputs:
@@ -77,7 +78,7 @@ def get_predection(image,net,LABELS,COLORS):
 
             # filter out weak predictions by ensuring the detected
             # probability is greater than the minimum probability
-            if confidence > confthres:
+            if classID == personIdx and confidence > confthres:
                 # scale the bounding box coordinates back relative to the
                 # size of the image, keeping in mind that YOLO actually
                 # returns the center (x, y)-coordinates of the bounding
